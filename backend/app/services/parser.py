@@ -1,7 +1,7 @@
 import re
 import yt_dlp
 from collections import defaultdict
-from app.utils.validators import URLValidator
+from backend.app.utils.validators import URLValidator
 
 # In-memory IP counter (use Redis in production)
 ip_usage_counter = defaultdict(int)
