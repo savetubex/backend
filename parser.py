@@ -237,31 +237,117 @@ class MediaParser:
         return fmt.get('format_note', 'unknown')
     
     async def _youtube_fallback(self, url: str, client_ip: str = None) -> dict:
-        """Fallback method using YouTube embed API"""
+        """Enhanced fallback method using YouTube player API"""
         video_id = self._extract_video_id(url)
         if not video_id:
             raise ValueError("Invalid YouTube URL")
         
         headers = {
             'User-Agent': random.choice(self.user_agents),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept': '*/*',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.youtube.com/'
+            'Referer': 'https://www.youtube.com/',
+            'Origin': 'https://www.youtube.com'
         }
         
         async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-            # Try embed page
+            try:
+                # Get video info from YouTube's internal API
+                api_url = f"https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+                
+                payload = {
+                    "context": {
+                        "client": {
+                            "clientName": "WEB",
+                            "clientVersion": "2.20231201.01.00"
+                        }
+                    },
+                    "videoId": video_id
+                }
+                
+                response = await client.post(api_url, json=payload)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Extract video details
+                    video_details = data.get('videoDetails', {})
+                    title = video_details.get('title', 'YouTube Video')
+                    thumbnail = video_details.get('thumbnail', {}).get('thumbnails', [{}])[-1].get('url', f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg")
+                    
+                    # Extract streaming data
+                    streaming_data = data.get('streamingData', {})
+                    formats = []
+                    
+                    # Process adaptive formats (video + audio separate)
+                    adaptive_formats = streaming_data.get('adaptiveFormats', [])
+                    video_formats = []
+                    audio_formats = []
+                    
+                    for fmt in adaptive_formats:
+                        if fmt.get('url'):
+                            mime_type = fmt.get('mimeType', '')
+                            quality = fmt.get('qualityLabel', fmt.get('quality', 'Unknown'))
+                            
+                            if 'video' in mime_type and quality != 'Unknown':
+                                video_formats.append({
+                                    'quality': quality,
+                                    'url': fmt['url'],
+                                    'type': 'video'
+                                })
+                            elif 'audio' in mime_type:
+                                audio_quality = fmt.get('audioQuality', 'AUDIO_QUALITY_MEDIUM')
+                                quality_label = 'High' if 'HIGH' in audio_quality else 'Medium' if 'MEDIUM' in audio_quality else 'Low'
+                                audio_formats.append({
+                                    'quality': f'Audio ({quality_label})',
+                                    'url': fmt['url'],
+                                    'type': 'audio'
+                                })
+                    
+                    # Process regular formats (video + audio combined)
+                    regular_formats = streaming_data.get('formats', [])
+                    for fmt in regular_formats:
+                        if fmt.get('url'):
+                            quality = fmt.get('qualityLabel', fmt.get('quality', 'Unknown'))
+                            if quality != 'Unknown':
+                                formats.append({
+                                    'quality': quality,
+                                    'url': fmt['url'],
+                                    'type': 'video'
+                                })
+                    
+                    # Combine all formats
+                    all_formats = formats + video_formats + audio_formats[:2]  # Limit audio formats
+                    
+                    if client_ip:
+                        ip_usage_counter[client_ip] += 1
+                    
+                    return {
+                        'platform': 'youtube',
+                        'title': title,
+                        'thumbnail': thumbnail,
+                        'formats': all_formats if all_formats else [{
+                            'quality': 'YouTube Link',
+                            'url': url,
+                            'type': 'video'
+                        }],
+                        'images': [{
+                            'label': 'Thumbnail',
+                            'url': thumbnail
+                        }]
+                    }
+                    
+            except Exception as e:
+                pass  # Fall back to basic method
+            
+            # Basic fallback if API fails
             embed_url = f"https://www.youtube.com/embed/{video_id}"
             response = await client.get(embed_url)
             
             if response.status_code == 200:
                 html = response.text
-                
-                # Extract title
                 title_match = re.search(r'"title":"([^"]+)"', html)
                 title = title_match.group(1) if title_match else "YouTube Video"
-                
-                # Extract thumbnail
                 thumb_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
                 
                 if client_ip:
