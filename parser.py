@@ -237,113 +237,18 @@ class MediaParser:
         return fmt.get('format_note', 'unknown')
     
     async def _youtube_fallback(self, url: str, client_ip: str = None) -> dict:
-        """Enhanced fallback using external APIs"""
+        """Fallback using reliable external service"""
         video_id = self._extract_video_id(url)
         if not video_id:
             raise ValueError("Invalid YouTube URL")
         
         headers = {
             'User-Agent': random.choice(self.user_agents),
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9'
+            'Accept': 'application/json'
         }
         
         async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-            # Try multiple external APIs
-            apis = [
-                f"https://api.cobalt.tools/api/json",
-                f"https://youtube-dl-api.herokuapp.com/api/info?url={url}",
-                f"https://api.vevioz.com/api/button/mp3/{video_id}"
-            ]
-            
-            # Method 1: Cobalt API
-            try:
-                payload = {
-                    "url": url,
-                    "vQuality": "720",
-                    "vFormat": "mp4",
-                    "aFormat": "mp3"
-                }
-                response = await client.post(apis[0], json=payload)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('status') == 'success':
-                        formats = []
-                        
-                        # Video format
-                        if data.get('url'):
-                            formats.append({
-                                'quality': '720p MP4',
-                                'url': data['url'],
-                                'type': 'video'
-                            })
-                        
-                        # Audio format
-                        if data.get('audio'):
-                            formats.append({
-                                'quality': 'Audio MP3',
-                                'url': data['audio'],
-                                'type': 'audio'
-                            })
-                        
-                        if formats:
-                            if client_ip:
-                                ip_usage_counter[client_ip] += 1
-                            
-                            return {
-                                'platform': 'youtube',
-                                'title': data.get('filename', 'YouTube Video'),
-                                'thumbnail': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
-                                'formats': formats,
-                                'images': [{
-                                    'label': 'Thumbnail',
-                                    'url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-                                }]
-                            }
-            except:
-                pass
-            
-            # Method 2: YouTube-DL API
-            try:
-                response = await client.get(apis[1])
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('formats'):
-                        formats = []
-                        
-                        # Process formats
-                        for fmt in data['formats'][:5]:  # Limit to 5 formats
-                            if fmt.get('url'):
-                                quality = fmt.get('format_note', fmt.get('height', 'Unknown'))
-                                if isinstance(quality, int):
-                                    quality = f"{quality}p"
-                                
-                                formats.append({
-                                    'quality': quality,
-                                    'url': fmt['url'],
-                                    'type': 'video' if fmt.get('vcodec') != 'none' else 'audio'
-                                })
-                        
-                        if formats:
-                            if client_ip:
-                                ip_usage_counter[client_ip] += 1
-                            
-                            return {
-                                'platform': 'youtube',
-                                'title': data.get('title', 'YouTube Video'),
-                                'thumbnail': data.get('thumbnail', f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"),
-                                'formats': formats,
-                                'images': [{
-                                    'label': 'Thumbnail',
-                                    'url': data.get('thumbnail', f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg")
-                                }]
-                            }
-            except:
-                pass
-            
-            # Method 3: Basic oembed + generic download links
+            # Get basic video info
             try:
                 oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
                 response = await client.get(oembed_url)
@@ -353,22 +258,32 @@ class MediaParser:
                     title = data.get('title', 'YouTube Video')
                     thumbnail = data.get('thumbnail_url', f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg")
                     
-                    # Provide alternative download services
+                    # Create download formats using working services
                     formats = [
                         {
-                            'quality': 'Download MP4',
-                            'url': f"https://www.y2mate.com/youtube/{video_id}",
+                            'quality': '720p MP4',
+                            'url': f"https://loader.to/api/button/?f=720&k={video_id}",
                             'type': 'video'
                         },
                         {
-                            'quality': 'Download MP3',
-                            'url': f"https://www.mp3converter.net/youtube/{video_id}",
+                            'quality': '480p MP4', 
+                            'url': f"https://loader.to/api/button/?f=480&k={video_id}",
+                            'type': 'video'
+                        },
+                        {
+                            'quality': '360p MP4',
+                            'url': f"https://loader.to/api/button/?f=360&k={video_id}", 
+                            'type': 'video'
+                        },
+                        {
+                            'quality': 'Audio MP3',
+                            'url': f"https://loader.to/api/button/?f=mp3&k={video_id}",
                             'type': 'audio'
                         },
                         {
-                            'quality': 'SaveFrom.net',
-                            'url': f"https://savefrom.net/#{url}",
-                            'type': 'video'
+                            'quality': 'Audio M4A',
+                            'url': f"https://loader.to/api/button/?f=m4a&k={video_id}",
+                            'type': 'audio'
                         }
                     ]
                     
@@ -388,22 +303,38 @@ class MediaParser:
             except:
                 pass
             
-            # Final fallback
+            # Final fallback with generic title
+            thumb_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+            
+            formats = [
+                {
+                    'quality': 'Download 720p',
+                    'url': f"https://ssyoutube.com/watch?v={video_id}",
+                    'type': 'video'
+                },
+                {
+                    'quality': 'Download 480p',
+                    'url': f"https://y2mate.com/youtube/{video_id}",
+                    'type': 'video'
+                },
+                {
+                    'quality': 'Download MP3',
+                    'url': f"https://ytmp3.cc/youtube-to-mp3/{video_id}",
+                    'type': 'audio'
+                }
+            ]
+            
             if client_ip:
                 ip_usage_counter[client_ip] += 1
             
             return {
                 'platform': 'youtube',
-                'title': 'YouTube Video',
-                'thumbnail': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
-                'formats': [{
-                    'quality': 'Watch on YouTube',
-                    'url': url,
-                    'type': 'video'
-                }],
+                'title': f'YouTube Video {video_id}',
+                'thumbnail': thumb_url,
+                'formats': formats,
                 'images': [{
                     'label': 'Thumbnail',
-                    'url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+                    'url': thumb_url
                 }]
             }
 
