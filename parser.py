@@ -1,5 +1,7 @@
 import re
 import yt_dlp
+import random
+import time
 from collections import defaultdict
 from validators import URLValidator
 
@@ -11,12 +13,37 @@ VIEW_LIMIT = 2
 class MediaParser:
     def __init__(self):
         self.validator = URLValidator()
-        self.ydl_opts = {
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
+        ]
+        
+    def _get_ydl_opts(self):
+        return {
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
             'skip_download': True,
             'format': 'best[height<=1080]/best',
+            'http_headers': {
+                'User-Agent': random.choice(self.user_agents),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            },
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['hls', 'dash'],
+                    'player_skip': ['configs', 'webpage']
+                }
+            },
+            'sleep_interval': 1,
+            'max_sleep_interval': 3
         }
 
     async def parse_url(self, url: str, client_ip: str = None) -> dict:
@@ -26,17 +53,33 @@ class MediaParser:
         self.validator.is_public_url(url)
         platform = self._detect_platform(url)
         
-        with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                info = ydl.extract_info(url, download=False)
-                self.validator.validate_content_type(info)
+                if attempt > 0:
+                    time.sleep(random.uniform(2, 5))
                 
-                if client_ip:
-                    ip_usage_counter[client_ip] += 1
-                
-                return self._format_response(info, platform)
+                with yt_dlp.YoutubeDL(self._get_ydl_opts()) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    self.validator.validate_content_type(info)
+                    
+                    if client_ip:
+                        ip_usage_counter[client_ip] += 1
+                    
+                    return self._format_response(info, platform)
+                    
             except Exception as e:
-                raise ValueError(f"Failed to extract media info: {str(e)}")
+                error_msg = str(e)
+                if attempt == max_retries - 1:
+                    if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
+                        raise ValueError("YouTube is temporarily blocking requests. Try a different video or wait a few minutes.")
+                    elif "Private video" in error_msg:
+                        raise ValueError("This video is private or unavailable")
+                    elif "Video unavailable" in error_msg:
+                        raise ValueError("Video is unavailable or has been removed")
+                    else:
+                        raise ValueError(f"Unable to process this video: {str(e)}")
+                continue
 
     def _detect_platform(self, url: str) -> str:
         if 'youtube.com' in url or 'youtu.be' in url:
